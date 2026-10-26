@@ -333,6 +333,19 @@ const MODEL_PRICING: Record<
   //    ($1.74/$3.48) so the dashboard does not jump 4× on June 1 — accept
   //    a brief over-estimate during the promo over a sudden cliff after it. --
   "deepseek-v4-flash":  { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+  // DeepSeek-V4.1-Flash, from the `deepseek-flash` row of
+  // api-docs.deepseek.com/quick_start/pricing. That page states the id is
+  // served by DeepSeek-V4.1-Flash-1017 and that legacy names keep billing at
+  // the Flash price, so OpenRouter's dated snapshot is the same SKU at the
+  // same rate — hence two exact keys rather than a suffix-stripping rule (a
+  // rule would be the one exception to the "every catalog SKU needs its own
+  // row" invariant stated in the header). DeepSeek publishes no separate
+  // cache-write rate, so cacheWrite mirrors input, as with the Kimi rows.
+  // Caveat: an aggregator can route the undated slug to a cheaper reseller
+  // than the official sheet, so such a turn is over-estimated here; the table
+  // prices the vendor rate like every other row.
+  "deepseek-v4.1-flash":      { input: 0.15, output: 0.60, cacheRead: 0.003, cacheWrite: 0.15 },
+  "deepseek-v4.1-flash-1017": { input: 0.15, output: 0.60, cacheRead: 0.003, cacheWrite: 0.15 },
   "deepseek-v4-pro":    { input: 1.74, output: 3.48, cacheRead: 0.0145, cacheWrite: 1.74 },
   "deepseek-chat":      { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
   "deepseek-reasoner":  { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
@@ -696,6 +709,18 @@ function canonicalCandidates(model: string): string[] {
   // semantic, so we leave `gpt-5.4` etc. alone.
   const canonAnthropic = (s: string) =>
     s.startsWith("claude-") ? s.replace(/\./g, "-") : s;
+  // Amazon Bedrock prefixes Anthropic ids with a region family (`us.`, `eu.`,
+  // `apac.`, `global.`) and the vendor (`anthropic.`), and appends the
+  // inference-profile version to snapshot ids (`...-20250929-v1:0`). A Bedrock
+  // turn reports `us.anthropic.claude-sonnet-5`, which matched no table key at
+  // all, so every such turn rendered as $0 plus an "unmapped" warning. Only the
+  // vendor-prefixed forms are rewritten: `us.amazon.nova-*` and friends stay
+  // unmapped rather than borrowing a Claude rate. Mirrors `normalizeBedrockID`
+  // in server/internal/metrics/pricing.go.
+  const stripBedrock = (s: string) =>
+    s
+      .replace(/^(?:us|eu|apac|global)\.anthropic\.|^anthropic\./, "")
+      .replace(/-v\d+:\d+$/, "");
   // Trailing context-window tag (`claude-opus-4-7[1m]`). Same family,
   // same price tier — see resolver comment above for the 1M-context
   // pricing trade-off.
@@ -714,15 +739,21 @@ function canonicalCandidates(model: string): string[] {
   const noProvider = stripProvider(raw);
   const dashed = canonAnthropic(noProvider);
   const noTag = stripContextTag(dashed);
+  // Bedrock ids reach us with dots (`us.anthropic.claude-…`) and a
+  // `-v1:0` profile version, so they need the prefix strip BEFORE the
+  // dot↔dash normalisation that `canonAnthropic` only applies to `claude-*`.
+  const bedrock = canonAnthropic(stripContextTag(stripBedrock(noProvider)));
 
   push(raw);
   push(noProvider);
   push(dashed);
   push(noTag);
+  push(bedrock);
   push(stripDate(raw));
   push(stripDate(noProvider));
   push(stripDate(dashed));
   push(stripDate(noTag));
+  push(stripDate(bedrock));
   push(canonGemini(noTag));
   push(canonGemini(stripDate(noTag)));
   canonicalCandidatesCache.set(model, out);

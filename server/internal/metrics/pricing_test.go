@@ -653,3 +653,92 @@ func TestPriceForModelAliasAnthropicOpus55(t *testing.T) {
 		}
 	}
 }
+
+// TestPriceForModelAliasBedrockAnthropicIDs pins the Bedrock shapes. Bedrock
+// reports Anthropic ids with a region family and vendor prefix plus an
+// inference-profile version suffix; without normalisation none of the Claude
+// rules matched, so every Bedrock-served turn was recorded as unpriced.
+func TestPriceForModelAliasBedrockAnthropicIDs(t *testing.T) {
+	cases := []struct {
+		model string
+		want  ModelPrice
+	}{
+		{
+			model: "us.anthropic.claude-sonnet-5",
+			want:  ModelPrice{Provider: "anthropic", Model: "claude-sonnet-5", InputPerM: 2, CacheReadPerM: 0.2, CacheWritePerM: 2.5, OutputPerM: 10},
+		},
+		{
+			// Europe / APAC / global profiles are the same SKU at the same rate.
+			model: "eu.anthropic.claude-sonnet-5",
+			want:  ModelPrice{Provider: "anthropic", Model: "claude-sonnet-5", InputPerM: 2, CacheReadPerM: 0.2, CacheWritePerM: 2.5, OutputPerM: 10},
+		},
+		{
+			model: "global.anthropic.claude-opus-5",
+			want:  ModelPrice{Provider: "anthropic", Model: "claude-opus-5", InputPerM: 5, CacheReadPerM: 0.5, CacheWritePerM: 6.25, OutputPerM: 25},
+		},
+		{
+			// Vendor prefix without a region family.
+			model: "anthropic.claude-haiku-5-5",
+			want:  ModelPrice{Provider: "anthropic", Model: "claude-haiku-5-5", InputPerM: 0.1, CacheReadPerM: 0.01, CacheWritePerM: 0.125, OutputPerM: 0.5},
+		},
+		{
+			// Snapshot id with the inference-profile version suffix.
+			model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+			want:  ModelPrice{Provider: "anthropic", Model: "claude-sonnet-4.5", InputPerM: 3, CacheReadPerM: 0.3, CacheWritePerM: 3.75, OutputPerM: 15},
+		},
+	}
+
+	for _, tc := range cases {
+		got, ok := PriceForModelAlias(tc.model)
+		if !ok {
+			t.Fatalf("PriceForModelAlias(%q) did not resolve", tc.model)
+		}
+		if got != tc.want {
+			t.Fatalf("PriceForModelAlias(%q) = %+v, want %+v", tc.model, got, tc.want)
+		}
+	}
+
+	// Normalising the prefix must not invent a rate: a later SKU, a
+	// non-Anthropic Bedrock model, or a qualifier that is its own SKU all stay
+	// unmapped rather than borrowing the nearest Claude tier.
+	for _, model := range []string{
+		"us.anthropic.claude-sonnet-6",
+		"us.anthropic.claude-sonnet-5-preview",
+		"us.amazon.nova-pro-v1:0",
+		"global.anthropic.claude-opus-5-mini",
+	} {
+		if got, ok := PriceForModelAlias(model); ok {
+			t.Fatalf("PriceForModelAlias(%q) unexpectedly resolved to %+v; want unmapped", model, got)
+		}
+	}
+}
+
+// TestPriceForModelAliasDeepSeekV41Flash pins the V4.1 Flash row, including the
+// dated OpenRouter snapshot that DeepSeek documents as the served model for the
+// undated id (same SKU, same rate — one row, not two).
+func TestPriceForModelAliasDeepSeekV41Flash(t *testing.T) {
+	want := ModelPrice{Provider: "deepseek", Model: "v4.1-flash", InputPerM: 0.15, CacheReadPerM: 0.003, CacheWritePerM: 0.15, OutputPerM: 0.60}
+	for _, model := range []string{
+		"deepseek-v4.1-flash",
+		"deepseek-v4-1-flash",
+		"deepseek/deepseek-v4.1-flash",
+		"deepseek/deepseek-v4.1-flash-1017",
+		"deepseek-v4.1-flash-1017",
+	} {
+		got, ok := PriceForModelAlias(model)
+		if !ok {
+			t.Fatalf("PriceForModelAlias(%q) did not resolve", model)
+		}
+		if got != want {
+			t.Fatalf("PriceForModelAlias(%q) = %+v, want %+v", model, got, want)
+		}
+	}
+
+	// The 4.1 rules must not leak into the v4 family: Pro has no 4.1 row yet,
+	// and the dated rule is anchored so a qualifier stays unmapped.
+	for _, model := range []string{"deepseek-v4.1-pro", "deepseek-v4.1-flash-preview"} {
+		if got, ok := PriceForModelAlias(model); ok {
+			t.Fatalf("PriceForModelAlias(%q) unexpectedly resolved to %+v; want unmapped", model, got)
+		}
+	}
+}

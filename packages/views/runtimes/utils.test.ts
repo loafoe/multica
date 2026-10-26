@@ -843,6 +843,71 @@ describe("estimateCost", () => {
     ).toBeCloseTo(flash, 5);
   });
 
+  it("prices DeepSeek-V4.1-Flash and its dated OpenRouter snapshot at the official $0.15/$0.60", () => {
+    // DeepSeek's sheet states the undated id is served by V4.1-Flash-1017, so
+    // the snapshot slug must land on exactly the same rate — not on the v4
+    // Flash tier and not unpriced. 1M of each bucket = 0.15 + 0.60 + 0.003 +
+    // 0.15 cache write.
+    const want = 0.15 + 0.60 + 0.003 + 0.15;
+    for (const model of [
+      "deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash-1017",
+    ]) {
+      expect(
+        estimateCost({
+          ...zeroUsage,
+          model,
+          input_tokens: 1_000_000,
+          output_tokens: 1_000_000,
+          cache_read_tokens: 1_000_000,
+          cache_write_tokens: 1_000_000,
+        }),
+      ).toBeCloseTo(want, 5);
+    }
+  });
+
+  it("prices Bedrock-served Anthropic ids like their bare catalog SKUs", () => {
+    // Bedrock reports `us.anthropic.<id>` (region family + vendor prefix) and
+    // appends the inference-profile version to snapshots. Before the prefix
+    // strip none of these matched a table key, so a Bedrock runtime showed
+    // $0.00 for every turn while the tokens were still counted.
+    const tokens = {
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+    const bareSonnet5 = estimateCost({
+      ...zeroUsage,
+      model: "claude-sonnet-5",
+      ...tokens,
+    });
+    for (const model of [
+      "us.anthropic.claude-sonnet-5",
+      "eu.anthropic.claude-sonnet-5",
+      "global.anthropic.claude-sonnet-5",
+      "anthropic.claude-sonnet-5",
+    ]) {
+      expect(estimateCost({ ...zeroUsage, provider: "claude", model, ...tokens })).toBeCloseTo(
+        bareSonnet5,
+        5,
+      );
+    }
+    // Snapshot + profile version suffix resolves to the same family tier.
+    expect(
+      estimateCost({
+        ...zeroUsage,
+        provider: "claude",
+        model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        input_tokens: 1_000_000,
+      }),
+    ).toBeCloseTo(3, 5);
+    // A non-Anthropic Bedrock model must stay unmapped instead of borrowing a
+    // Claude rate.
+    expect(isModelPriced("us.amazon.nova-pro-v1:0", "amazon")).toBe(false);
+  });
+
   it("prices kimi-k2.6 at the official $0.95 / $4.00 tier (not the K2 tier)", () => {
     // Moonshot's K2.6 page is the only authoritative source today; K2.6 is
     // explicitly NOT priced like K2. 1M input × $0.95 + 1M output × $4.00 = $4.95.
