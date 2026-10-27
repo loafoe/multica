@@ -655,9 +655,8 @@ func TestPriceForModelAliasAnthropicOpus55(t *testing.T) {
 }
 
 // TestPriceForModelAliasBedrockAnthropicIDs pins the Bedrock shapes. Bedrock
-// reports Anthropic ids with a region family and vendor prefix plus an
-// inference-profile version suffix; without normalisation none of the Claude
-// rules matched, so every Bedrock-served turn was recorded as unpriced.
+// reports Anthropic ids with a region family and vendor prefix plus a version
+// suffix. Newer Claude rules reject that suffix until it is normalized.
 func TestPriceForModelAliasBedrockAnthropicIDs(t *testing.T) {
 	cases := []struct {
 		model string
@@ -686,6 +685,10 @@ func TestPriceForModelAliasBedrockAnthropicIDs(t *testing.T) {
 			model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 			want:  ModelPrice{Provider: "anthropic", Model: "claude-sonnet-4.5", InputPerM: 3, CacheReadPerM: 0.3, CacheWritePerM: 3.75, OutputPerM: 15},
 		},
+		{
+			model: "custom:bedrock/us.anthropic.claude-sonnet-5-v1:0[1m]",
+			want:  ModelPrice{Provider: "anthropic", Model: "claude-sonnet-5", InputPerM: 2, CacheReadPerM: 0.2, CacheWritePerM: 2.5, OutputPerM: 10},
+		},
 	}
 
 	for _, tc := range cases {
@@ -706,6 +709,12 @@ func TestPriceForModelAliasBedrockAnthropicIDs(t *testing.T) {
 		"us.anthropic.claude-sonnet-5-preview",
 		"us.amazon.nova-pro-v1:0",
 		"global.anthropic.claude-opus-5-mini",
+		"us.anthropic.claude-sonnet-5-preview-v1:0",
+		"us.anthropic.claude-sonnet-5-v1:0junk",
+		"us.anthropic.claude-sonnet-5-v1:0[1m][2m]",
+		"gpt-6.1-sol-v1:0",
+		"claude-sonnet-5-v1:0",
+		"us.anthropic.gpt-6.1-sol-v1:0",
 	} {
 		if got, ok := PriceForModelAlias(model); ok {
 			t.Fatalf("PriceForModelAlias(%q) unexpectedly resolved to %+v; want unmapped", model, got)
@@ -717,28 +726,40 @@ func TestPriceForModelAliasBedrockAnthropicIDs(t *testing.T) {
 // dated OpenRouter snapshot that DeepSeek documents as the served model for the
 // undated id (same SKU, same rate — one row, not two).
 func TestPriceForModelAliasDeepSeekV41Flash(t *testing.T) {
-	want := ModelPrice{Provider: "deepseek", Model: "v4.1-flash", InputPerM: 0.15, CacheReadPerM: 0.003, CacheWritePerM: 0.15, OutputPerM: 0.60}
+	want := ModelPrice{Provider: "deepseek", Model: "v4.1-flash", InputPerM: 0.30, CacheReadPerM: 0.006, CacheWritePerM: 0.30, OutputPerM: 1.20}
 	for _, model := range []string{
+		"deepseek-flash",
+		"deepseek/deepseek-flash",
+		"custom:deepseek/deepseek-flash[1m]",
+		"deepseek-v4-flash",
+		"deepseek-v4-flash-vision-exp",
+		"deepseek/deepseek-v4-flash-vision-exp",
+		"deepseek-chat",
+		"deepseek-reasoner",
 		"deepseek-v4.1-flash",
-		"deepseek-v4-1-flash",
 		"deepseek/deepseek-v4.1-flash",
 		"deepseek/deepseek-v4.1-flash-1017",
 		"deepseek-v4.1-flash-1017",
 	} {
 		got, ok := PriceForModelAlias(model)
 		if !ok {
-			t.Fatalf("PriceForModelAlias(%q) did not resolve", model)
+			t.Errorf("PriceForModelAlias(%q) did not resolve", model)
+			continue
 		}
 		if got != want {
-			t.Fatalf("PriceForModelAlias(%q) = %+v, want %+v", model, got, want)
+			t.Errorf("PriceForModelAlias(%q) = %+v, want %+v", model, got, want)
 		}
 	}
 
-	// The 4.1 rules must not leak into the v4 family: Pro has no 4.1 row yet,
-	// and the dated rule is anchored so a qualifier stays unmapped.
-	for _, model := range []string{"deepseek-v4.1-pro", "deepseek-v4.1-flash-preview"} {
+	// Only documented Flash aliases and the known 1017 snapshot are priced.
+	for _, model := range []string{
+		"deepseek-v4.1-pro", "deepseek-v4.1-flash-preview",
+		"deepseek-v4-1-flash", "deepseek-v4.1-flash-1020",
+		"deepseek-v4.1-flash-1017-preview", "deepseek-flash-preview",
+		"deepseek-v4-flash-preview", "deepseek-v4-flash-vision-exp-extra",
+	} {
 		if got, ok := PriceForModelAlias(model); ok {
-			t.Fatalf("PriceForModelAlias(%q) unexpectedly resolved to %+v; want unmapped", model, got)
+			t.Errorf("PriceForModelAlias(%q) unexpectedly resolved to %+v; want unmapped", model, got)
 		}
 	}
 }

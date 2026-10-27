@@ -324,31 +324,21 @@ const MODEL_PRICING: Record<
   "gpt-4o-mini":        { input: 0.15, output: 0.60, cacheRead: 0.075, cacheWrite: 0.15 },
   "gpt-4o":             { input: 2.50, output: 10,   cacheRead: 1.25,  cacheWrite: 2.50 },
 
-  // -- DeepSeek (api-docs.deepseek.com/quick_start/pricing).
-  //    The official catalog lists exactly two current SKUs; `deepseek-chat`
-  //    and `deepseek-reasoner` are aliases that route to `deepseek-v4-flash`
-  //    (non-thinking and thinking mode respectively) per the same page.
-  //    `deepseek-v4-pro` is currently under a 75%-off promo that ends
-  //    2026-05-31 15:59 UTC; we price at the post-promo standard rate
-  //    ($1.74/$3.48) so the dashboard does not jump 4× on June 1 — accept
-  //    a brief over-estimate during the promo over a sudden cliff after it. --
-  "deepseek-v4-flash":  { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
-  // DeepSeek-V4.1-Flash, from the `deepseek-flash` row of
-  // api-docs.deepseek.com/quick_start/pricing. That page states the id is
-  // served by DeepSeek-V4.1-Flash-1017 and that legacy names keep billing at
-  // the Flash price, so OpenRouter's dated snapshot is the same SKU at the
-  // same rate — hence two exact keys rather than a suffix-stripping rule (a
-  // rule would be the one exception to the "every catalog SKU needs its own
-  // row" invariant stated in the header). DeepSeek publishes no separate
-  // cache-write rate, so cacheWrite mirrors input, as with the Kimi rows.
-  // Caveat: an aggregator can route the undated slug to a cheaper reseller
-  // than the official sheet, so such a turn is over-estimated here; the table
-  // prices the vendor rate like every other row.
-  "deepseek-v4.1-flash":      { input: 0.15, output: 0.60, cacheRead: 0.003, cacheWrite: 0.15 },
-  "deepseek-v4.1-flash-1017": { input: 0.15, output: 0.60, cacheRead: 0.003, cacheWrite: 0.15 },
+  // -- DeepSeek Flash: api-docs.deepseek.com/quick_start/pricing/ (2026-10-27).
+  // The English sheet supplies USD; the Chinese sheet lists CNY. The official
+  // Flash name and retired v4 aliases serve V4.1-Flash-1017. Preserve the
+  // existing Flash routing for chat/reasoner. Only known spellings and the
+  // 1017 snapshot resolve. Use peak USD rates because rollups lack each
+  // request's pricing window; off-peak costs half as much and reseller prices
+  // can differ. Cache writes bill as ordinary input. Mirror pricing.go.
+  "deepseek-flash":              { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
+  "deepseek-v4-flash":           { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
+  "deepseek-v4-flash-vision-exp": { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
+  "deepseek-v4.1-flash":          { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
+  "deepseek-v4.1-flash-1017":     { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
+  "deepseek-chat":               { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
+  "deepseek-reasoner":           { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0.30 },
   "deepseek-v4-pro":    { input: 1.74, output: 3.48, cacheRead: 0.0145, cacheWrite: 1.74 },
-  "deepseek-chat":      { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
-  "deepseek-reasoner":  { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
 
   // -- Moonshot Kimi (kimi.com/resources/kimi-k2-6-pricing).
   //    Only K2.6 is on the official price sheet today; earlier K2 variants
@@ -717,10 +707,13 @@ function canonicalCandidates(model: string): string[] {
   // vendor-prefixed forms are rewritten: `us.amazon.nova-*` and friends stay
   // unmapped rather than borrowing a Claude rate. Mirrors `normalizeBedrockID`
   // in server/internal/metrics/pricing.go.
-  const stripBedrock = (s: string) =>
-    s
-      .replace(/^(?:us|eu|apac|global)\.anthropic\.|^anthropic\./, "")
-      .replace(/-v\d+:\d+$/, "");
+  const stripBedrock = (s: string) => {
+    const prefix = /^(?:(?:us|eu|apac|global)\.)?anthropic\.(claude-)/;
+    if (!prefix.test(s)) return s;
+    return s
+      .replace(prefix, "$1")
+      .replace(/-v\d+:\d+(\[[^\]]+\])?$/, "$1");
+  };
   // Trailing context-window tag (`claude-opus-4-7[1m]`). Same family,
   // same price tier — see resolver comment above for the 1M-context
   // pricing trade-off.

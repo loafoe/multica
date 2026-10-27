@@ -64,21 +64,12 @@ var modelPrices = map[string]ModelPrice{
 	"anthropic:claude-sonnet-4.5": {Provider: "anthropic", Model: "claude-sonnet-4.5", InputPerM: 3.00, CacheReadPerM: 0.30, CacheWritePerM: 3.75, OutputPerM: 15.00},
 	"anthropic:claude-haiku-4.5":  {Provider: "anthropic", Model: "claude-haiku-4.5", InputPerM: 1.00, CacheReadPerM: 0.10, CacheWritePerM: 1.25, OutputPerM: 5.00},
 	"deepseek:v4-pro":             {Provider: "deepseek", Model: "v4-pro", InputPerM: 1.74, CacheReadPerM: 0.0145, CacheWritePerM: 1.74, OutputPerM: 3.48},
-	"deepseek:v4-flash":           {Provider: "deepseek", Model: "v4-flash", InputPerM: 0.56, CacheReadPerM: 0.0112, CacheWritePerM: 0.56, OutputPerM: 1.12},
-	// DeepSeek-V4.1-Flash, from the `deepseek-flash` row of
-	// api-docs.deepseek.com/quick_start/pricing. That page states the id is
-	// served by DeepSeek-V4.1-Flash-1017 and that the legacy names keep billing
-	// at the Flash price, so OpenRouter's dated snapshot
-	// (`deepseek/deepseek-v4.1-flash-1017`) is the SAME SKU at the SAME rate —
-	// one row plus an optional build stamp in the alias rule below, not a
-	// second price row that could drift. DeepSeek publishes no separate
-	// cache-write rate, so CacheWrite mirrors Input (same convention as the
-	// Kimi rows). Caveat: aggregators can route the undated slug to a cheaper
-	// reseller than the official sheet, so a reseller-routed turn may be
-	// over-estimated; pricing the official rate keeps this table consistent
-	// with every other vendor-rate row instead of tracking one reseller's
-	// transient floor.
-	"deepseek:v4.1-flash":    {Provider: "deepseek", Model: "v4.1-flash", InputPerM: 0.15, CacheReadPerM: 0.003, CacheWritePerM: 0.15, OutputPerM: 0.60},
+	// DeepSeek Flash: api-docs.deepseek.com/quick_start/pricing/ (2026-10-27).
+	// The English sheet supplies USD; the Chinese sheet lists CNY. Use peak
+	// USD rates because rollups lack each request's pricing window. Off-peak
+	// costs half as much; reseller prices can also differ. Cache writes bill
+	// as ordinary input. Mirror packages/views/runtimes/utils.ts.
+	"deepseek:v4.1-flash":    {Provider: "deepseek", Model: "v4.1-flash", InputPerM: 0.30, CacheReadPerM: 0.006, CacheWritePerM: 0.30, OutputPerM: 1.20},
 	"minimax:m2.7":           {Provider: "minimax", Model: "m2.7", InputPerM: 0.30, CacheReadPerM: 0.06, CacheWritePerM: 0.375, OutputPerM: 1.20},
 	"minimax:m2.7-highspeed": {Provider: "minimax", Model: "m2.7-highspeed", InputPerM: 0.60, CacheReadPerM: 0.06, CacheWritePerM: 0.375, OutputPerM: 2.40},
 	// Google standard token prices: ai.google.dev/gemini-api/docs/pricing
@@ -236,14 +227,11 @@ var modelAliasRules = []struct {
 	{regexp.MustCompile(`claude-sonnet-4[-.]6|claude-4[-.]6-sonnet`), "anthropic:claude-sonnet-4.6"},
 	{regexp.MustCompile(`claude-sonnet-4[-.]5|claude-4[-.]5-sonnet`), "anthropic:claude-sonnet-4.5"},
 	{regexp.MustCompile(`claude-haiku-4[-.]5`), "anthropic:claude-haiku-4.5"},
-	// DeepSeek-V4.1-Flash before the v4 rules: the v4 ones are substring
-	// matches, so they must not be given a chance to swallow a 4.1 id. The
-	// optional `-1\d{3}` admits OpenRouter's dated snapshots of the same SKU
-	// (`deepseek-v4.1-flash-1017`), which DeepSeek documents as the served
-	// model for the undated id — same rate, so they share one price row.
-	{regexp.MustCompile(`(^|/|:)deepseek-v4[.-]1-flash(?:-1\d{3})?$`), "deepseek:v4.1-flash"},
+	// The official Flash name and retired v4 aliases serve V4.1-Flash-1017.
+	// Preserve chat/reasoner's existing Flash routing. Only known spellings
+	// and the 1017 snapshot resolve, matching the frontend's exact keys.
+	{regexp.MustCompile(`(^|/|:)deepseek-(?:flash|v4-flash(?:-vision-exp)?|v4\.1-flash(?:-1017)?|chat|reasoner)$`), "deepseek:v4.1-flash"},
 	{regexp.MustCompile(`deepseek-v4-pro`), "deepseek:v4-pro"},
-	{regexp.MustCompile(`deepseek-v4-flash|^deepseek-chat$|^deepseek-reasoner$`), "deepseek:v4-flash"},
 	{regexp.MustCompile(`minimax-m2[.]7.*highspeed|highspeed.*minimax-m2[.]7`), "minimax:m2.7-highspeed"},
 	{regexp.MustCompile(`minimax-m2[.]7`), "minimax:m2.7"},
 	// Each Gemini SKU is exact: an image/audio/preview variant must never
@@ -331,20 +319,14 @@ func matchModelAlias(model string) (ModelPrice, bool) {
 	return ModelPrice{}, false
 }
 
-// bedrockAnthropicIDRe matches the vendor and region prefixes Amazon Bedrock
-// puts in front of Anthropic model ids: cross-region inference profiles prefix
-// the region family (`us.`, `eu.`, `apac.`, `global.`), and every Bedrock id
-// then names the vendor (`anthropic.`). A Bedrock turn therefore reports
-// `us.anthropic.claude-sonnet-5`, which matches NONE of the Claude rules below
-// — the rules anchor on `/`, `:` or start-of-string, never on `.` — so the
-// whole turn landed in the unpriced bucket and billed as $0 in the dashboard.
-var bedrockAnthropicIDRe = regexp.MustCompile(`^(?:us|eu|apac|global)\.anthropic\.|^anthropic\.`)
+// Bedrock Anthropic ids may follow routing prefixes such as `custom:bedrock/`.
+// Accept the same routing segments as the frontend's stripProvider, and only
+// normalize Claude ids under the recognized Bedrock vendor/region prefixes.
+var bedrockAnthropicIDRe = regexp.MustCompile(`^(?:[a-z][a-z0-9_-]*[/:])*(?:(?:us|eu|apac|global)\.)?anthropic\.(claude-)`)
 
-// bedrockVersionSuffixRe strips the inference-profile version Bedrock appends
-// to snapshot ids (`...-20250929-v1:0`). It runs after the prefix strip, before
-// the rules, which already accept the bare snapshot date via the date suffix
-// forms they allow.
-var bedrockVersionSuffixRe = regexp.MustCompile(`-v\d+:\d+$`)
+// Preserve a single context tag for the existing matcher while removing the
+// Bedrock version (`...-v1:0[1m]`). Multiple tags remain unrecognized.
+var bedrockVersionSuffixRe = regexp.MustCompile(`-v\d+:\d+(\[[^\]]+\])?$`)
 
 // normalizeBedrockID rewrites a Bedrock-served Anthropic id into the bare
 // catalog id the price rows are keyed by, so `us.anthropic.claude-sonnet-5`
@@ -357,8 +339,8 @@ func normalizeBedrockID(model string) string {
 	if !bedrockAnthropicIDRe.MatchString(model) {
 		return model
 	}
-	model = bedrockAnthropicIDRe.ReplaceAllString(model, "")
-	return bedrockVersionSuffixRe.ReplaceAllString(model, "")
+	model = bedrockAnthropicIDRe.ReplaceAllString(model, "${1}")
+	return bedrockVersionSuffixRe.ReplaceAllString(model, "${1}")
 }
 
 func PriceForModelAlias(model string) (ModelPrice, bool) {
